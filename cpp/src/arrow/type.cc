@@ -2210,9 +2210,22 @@ std::vector<FieldPath> FieldRef::FindAll(const FieldVector& fields) const {
         Matches next_matches;
         for (size_t i = 0; i < matches.size(); ++i) {
           const auto& referent = *matches.referents[i];
+          auto referent_type = referent.type();
+          const FieldVector* referent_fields = &referent_type->fields();
+          
+          // Unwrap list types to get the element/value type's fields
+          auto type_id = referent_type->id();
+          if (type_id == Type::LIST || type_id == Type::LARGE_LIST ||
+              type_id == Type::LIST_VIEW || type_id == Type::LARGE_LIST_VIEW ||
+              type_id == Type::FIXED_SIZE_LIST) {
+            const auto& list_fields = referent_type->fields();
+            if (!list_fields.empty()) {
+              referent_fields = &list_fields[0]->type()->fields();
+            }
+          }
 
           for (const FieldPath& match : ref_it->FindAll(referent)) {
-            next_matches.Add(matches.prefixes[i], match, referent.type()->fields());
+            next_matches.Add(matches.prefixes[i], match, *referent_fields);
           }
         }
         matches = std::move(next_matches);

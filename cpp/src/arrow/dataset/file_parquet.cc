@@ -241,7 +241,16 @@ Status ResolveOneFieldRef(
           }
         } else {
           const SchemaField* result = nullptr;
-          for (const auto& child : field->children) {
+          const SchemaField* search_field = field;
+          const auto field_type_id = field->field->type()->id();
+          if (field_type_id == Type::LIST || field_type_id == Type::LARGE_LIST ||
+              field_type_id == Type::LIST_VIEW || field_type_id == Type::LARGE_LIST_VIEW ||
+              field_type_id == Type::FIXED_SIZE_LIST) {
+            if (!field->children.empty()) {
+              search_field = &field->children[0];
+            }
+          }
+          for (const auto& child : search_field->children) {
             if (child.field->name() == *name) {
               if (!result) {
                 result = &child;
@@ -540,7 +549,7 @@ Future<std::shared_ptr<parquet::arrow::FileReader>> ParquetFileFormat::GetReader
     return parquet::ParquetFileReader::OpenAsync(input, properties, metadata)
         .Then(
             [=](const std::unique_ptr<parquet::ParquetFileReader>& reader) mutable
-            -> Result<std::shared_ptr<parquet::arrow::FileReader>> {
+                -> Result<std::shared_ptr<parquet::arrow::FileReader>> {
               auto arrow_properties = MakeArrowReaderProperties(
                   *self, *reader->metadata(), *options, *parquet_scan_options);
 
