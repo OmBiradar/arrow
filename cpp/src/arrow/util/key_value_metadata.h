@@ -64,7 +64,7 @@ class ARROW_EXPORT KeyValueMetadata {
   std::vector<std::pair<std::string, std::string>> sorted_pairs() const;
 
   /// \brief Perform linear search for key, returning -1 if not found
-  int FindKey(std::string_view key) const;
+  int64_t FindKey(std::string_view key) const;
 
   std::shared_ptr<KeyValueMetadata> Copy() const;
 

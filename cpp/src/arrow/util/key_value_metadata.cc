@@ -100,14 +100,21 @@ Result<std::string> KeyValueMetadata::Get(std::string_view key) const {
 }
 
 Status KeyValueMetadata::Delete(int64_t index) {
+  if (index < 0 || index >= values_.size()) {
+    return arrow::Status::IndexError();
+  }
   keys_.erase(keys_.begin() + index);
   values_.erase(values_.begin() + index);
   return Status::OK();
 }
 
+// didnt check
 Status KeyValueMetadata::DeleteMany(std::vector<int64_t> indices) {
   std::sort(indices.begin(), indices.end());
   const int64_t size = static_cast<int64_t>(keys_.size());
+  if (indices[0] < 0 || indices.back() >= size) {
+    return Status::IndexError();
+  }
   indices.push_back(size);
 
   int64_t shift = 0;
@@ -115,10 +122,10 @@ Status KeyValueMetadata::DeleteMany(std::vector<int64_t> indices) {
     ++shift;
     const auto start = indices[i] + 1;
     const auto stop = indices[i + 1];
-    DCHECK_GE(start, 0);
-    DCHECK_LE(start, size);
-    DCHECK_GE(stop, 0);
-    DCHECK_LE(stop, size);
+    // DCHECK_GE(start, 0); // check is useless for index[0] = -1
+    // DCHECK_LE(start, size);
+    // DCHECK_GE(stop, 0);
+    // DCHECK_LE(stop, size);
     for (int64_t index = start; index < stop; ++index) {
       keys_[index - shift] = std::move(keys_[index]);
       values_[index - shift] = std::move(values_[index]);
@@ -186,10 +193,10 @@ std::vector<std::pair<std::string, std::string>> KeyValueMetadata::sorted_pairs(
   return pairs;
 }
 
-int KeyValueMetadata::FindKey(std::string_view key) const {
+int64_t KeyValueMetadata::FindKey(std::string_view key) const {
   for (size_t i = 0; i < keys_.size(); ++i) {
     if (keys_[i] == key) {
-      return static_cast<int>(i);
+      return i;
     }
   }
   return -1;
@@ -199,6 +206,7 @@ std::shared_ptr<KeyValueMetadata> KeyValueMetadata::Copy() const {
   return std::make_shared<KeyValueMetadata>(keys_, values_);
 }
 
+// didn't check
 std::shared_ptr<KeyValueMetadata> KeyValueMetadata::Merge(
     const KeyValueMetadata& other) const {
   std::unordered_set<std::string> observed_keys;
@@ -230,6 +238,7 @@ std::shared_ptr<KeyValueMetadata> KeyValueMetadata::Merge(
                                             std::move(result_values));
 }
 
+// what if the keys are duplicate
 bool KeyValueMetadata::Equals(const KeyValueMetadata& other) const {
   if (size() != other.size()) {
     return false;
@@ -259,6 +268,7 @@ std::string KeyValueMetadata::ToString() const {
   return buffer.str();
 }
 
+// checked
 std::shared_ptr<KeyValueMetadata> key_value_metadata(
     const std::unordered_map<std::string, std::string>& pairs) {
   return std::make_shared<KeyValueMetadata>(pairs);
