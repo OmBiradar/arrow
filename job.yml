@@ -1,0 +1,26 @@
+!Job
+target: !Target
+  head: f846f907d1c7e5764e6c8f2ae3c0c77fd7bbdbcd
+  email: ombiradar04@gmail.com
+  branch: GH-50298-clang22
+  remote: https://github.com/OmBiradar/arrow.git
+  github_repo: OmBiradar/arrow
+  version: 25.0.0.dev201
+  r_version: 24.0.0.100000201
+  no_rc_version: 25.0.0.dev201
+  no_rc_r_version: 24.0.0.100000201
+  no_rc_no_dev_version: 25.0.0
+  no_rc_semver_version: 25.0.0-dev201
+  no_rc_snapshot_version: 25.0.0-SNAPSHOT
+  so_version: '2500'
+tasks:
+  test-r-linux-as-cran: !Task
+    name: test-r-linux-as-cran
+    ci: github
+    template: r/github.linux.cran.yml
+    artifacts: []
+    params: {}
+    branch: build-0-github-test-r-linux-as-cran
+    commit: b5f3b0451e6a7af92da46ddabdfd9ead8078b7d5
+params: {}
+branch: build-0
