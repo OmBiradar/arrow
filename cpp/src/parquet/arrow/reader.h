@@ -281,6 +281,45 @@ class PARQUET_EXPORT FileReader {
   virtual ::arrow::Result<std::shared_ptr<::arrow::Table>> ReadRowGroups(
       const std::vector<int>& row_groups) = 0;
 
+  /// \brief Asynchronously read all columns into a Table.
+  ///
+  /// Returns a Future that completes when all row groups and columns have been
+  /// decoded. Unlike ReadTable(), this does not block the calling thread — callers
+  /// can attach continuations via .Then() or wait explicitly via .MoveResult().
+  ///
+  /// Column reads are submitted to the thread pool as non-blocking tasks, avoiding
+  /// the thread saturation problem where blocking column reads exhaust the pool.
+  virtual ::arrow::Future<std::shared_ptr<::arrow::Table>> ReadTableAsync() = 0;
+
+  /// \brief Asynchronously read the given columns into a Table.
+  virtual ::arrow::Future<std::shared_ptr<::arrow::Table>> ReadTableAsync(
+      const std::vector<int>& column_indices) = 0;
+
+  /// \brief Asynchronously read the given row group columns into a Table.
+  virtual ::arrow::Future<std::shared_ptr<::arrow::Table>> ReadRowGroupAsync(
+      int i, const std::vector<int>& column_indices) = 0;
+
+  /// \brief Asynchronously read the given row group into a Table.
+  virtual ::arrow::Future<std::shared_ptr<::arrow::Table>> ReadRowGroupAsync(int i) = 0;
+
+  /// \brief Asynchronously read the given row groups columns into a Table.
+  ///
+  /// Returns a Future that completes when all specified row groups and columns
+  /// have been decoded. Column reads are submitted as non-blocking async tasks
+  /// to avoid saturating the thread pool.
+  ///
+  /// \param row_groups which row groups to read.
+  /// \param column_indices which columns to read.
+  /// \param cpu_executor optional executor for CPU-bound work (defaults to
+  ///     the global CPU thread pool).
+  virtual ::arrow::Future<std::shared_ptr<::arrow::Table>> ReadRowGroupsAsync(
+      const std::vector<int>& row_groups, const std::vector<int>& column_indices,
+      ::arrow::internal::Executor* cpu_executor = NULLPTR) = 0;
+
+  /// \brief Asynchronously read the given row groups into a Table.
+  virtual ::arrow::Future<std::shared_ptr<::arrow::Table>> ReadRowGroupsAsync(
+      const std::vector<int>& row_groups) = 0;
+
   /// \deprecated Deprecated in 24.0.0. Use arrow::Result version instead.
   ARROW_DEPRECATED("Deprecated in 24.0.0. Use arrow::Result version instead.")
   ::arrow::Status ReadRowGroup(int i, const std::vector<int>& column_indices,

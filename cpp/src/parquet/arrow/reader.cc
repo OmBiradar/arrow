@@ -306,7 +306,7 @@ class FileReaderImpl : public FileReader {
   }
 
   Result<std::shared_ptr<Table>> ReadTable() override {
-    return ReadTable(Iota(reader_->metadata()->num_columns()));
+    return ReadTableAsync().MoveResult();
   }
 
   Result<std::shared_ptr<Table>> ReadRowGroups(const std::vector<int>& row_groups,
@@ -331,6 +331,34 @@ class FileReaderImpl : public FileReader {
 
   Result<std::shared_ptr<Table>> ReadRowGroup(int i) override {
     return ReadRowGroup(i, Iota(reader_->metadata()->num_columns()));
+  }
+
+  Future<std::shared_ptr<Table>> ReadTableAsync() override {
+    return ReadTableAsync(Iota(reader_->metadata()->num_columns()));
+  }
+
+  Future<std::shared_ptr<Table>> ReadTableAsync(
+      const std::vector<int>& column_indices) override {
+    return ReadRowGroupsAsync(Iota(reader_->metadata()->num_row_groups()),
+                              column_indices);
+  }
+
+  Future<std::shared_ptr<Table>> ReadRowGroupAsync(
+      int i, const std::vector<int>& column_indices) override {
+    return ReadRowGroupsAsync({i}, column_indices);
+  }
+
+  Future<std::shared_ptr<Table>> ReadRowGroupAsync(int i) override {
+    return ReadRowGroupAsync(i, Iota(reader_->metadata()->num_columns()));
+  }
+
+  Future<std::shared_ptr<Table>> ReadRowGroupsAsync(
+      const std::vector<int>& row_groups, const std::vector<int>& column_indices,
+      ::arrow::internal::Executor* cpu_executor = NULLPTR) override;
+
+  Future<std::shared_ptr<Table>> ReadRowGroupsAsync(
+      const std::vector<int>& row_groups) override {
+    return ReadRowGroupsAsync(row_groups, Iota(reader_->metadata()->num_columns()));
   }
 
   Result<std::unique_ptr<RecordBatchReader>> GetRecordBatchReader(
@@ -1101,18 +1129,29 @@ Result<std::unique_ptr<RecordBatchReader>> FileReaderImpl::GetRecordBatchReader(
   // `GetRecordBatchReader()`, so it must capture `readers` and `batch_schema` by value.
   // `this` is a non-owning pointer so we are relying on the parent FileReader outliving
   // this RecordBatchReader.
+  bool use_threads = reader_properties_.use_threads();
   ::arrow::Iterator<RecordBatchIterator> batches = ::arrow::MakeFunctionIterator(
-      [readers, batch_schema, num_rows,
+      [readers, batch_schema, num_rows, use_threads,
        this]() mutable -> ::arrow::Result<RecordBatchIterator> {
-        ::arrow::ChunkedArrayVector columns(readers.size());
-
         // don't reserve more rows than necessary
         int64_t batch_size = std::min(properties().batch_size(), num_rows);
         num_rows -= batch_size;
 
-        RETURN_NOT_OK(::arrow::internal::OptionalParallelFor(
-            reader_properties_.use_threads(), static_cast<int>(readers.size()),
-            [&](int i) { return readers[i]->NextBatch(batch_size, &columns[i]); }));
+        auto read_column = [batch_size](size_t i,
+                                        std::shared_ptr<ColumnReaderImpl> reader)
+            -> ::arrow::Result<std::shared_ptr<::arrow::ChunkedArray>> {
+          std::shared_ptr<::arrow::ChunkedArray> column;
+          RETURN_NOT_OK(reader->NextBatch(batch_size, &column));
+          return column;
+        };
+
+        // Make a copy of readers for the async submission (needs shared_ptr vector)
+        std::vector<std::shared_ptr<ColumnReaderImpl>> readers_copy(readers);
+        ARROW_ASSIGN_OR_RAISE(auto columns,
+                              ::arrow::internal::OptionalParallelForAsync(
+                                  use_threads, std::move(readers_copy), read_column,
+                                  ::arrow::internal::GetCpuThreadPool())
+                                  .MoveResult());
 
         for (const auto& column : columns) {
           if (column == nullptr || column->length() == 0) {
@@ -1130,7 +1169,9 @@ Result<std::unique_ptr<RecordBatchReader>> FileReaderImpl::GetRecordBatchReader(
           }
         }
 
-        auto table = ::arrow::Table::Make(batch_schema, std::move(columns));
+        ::arrow::ChunkedArrayVector columns_vec(std::make_move_iterator(columns.begin()),
+                                                std::make_move_iterator(columns.end()));
+        auto table = ::arrow::Table::Make(batch_schema, std::move(columns_vec));
         auto table_reader = std::make_shared<::arrow::TableBatchReader>(*table);
 
         // NB: explicitly preserve table so that table_reader doesn't outlive it
@@ -1300,9 +1341,12 @@ Status FileReaderImpl::GetColumn(int i, FileColumnIteratorFactory iterator_facto
   return Status::OK();
 }
 
-Result<std::shared_ptr<Table>> FileReaderImpl::ReadRowGroups(
-    const std::vector<int>& row_groups, const std::vector<int>& column_indices) {
-  RETURN_NOT_OK(BoundsCheck(row_groups, column_indices));
+Future<std::shared_ptr<Table>> FileReaderImpl::ReadRowGroupsAsync(
+    const std::vector<int>& row_groups, const std::vector<int>& column_indices,
+    ::arrow::internal::Executor* cpu_executor) {
+  if (auto status = BoundsCheck(row_groups, column_indices); !status.ok()) {
+    return Future<std::shared_ptr<Table>>::MakeFinished(status);
+  }
 
   // PARQUET-1698/PARQUET-1820: pre-buffer row groups/column chunks if enabled
   if (reader_properties_.pre_buffer()) {
@@ -1313,9 +1357,12 @@ Result<std::shared_ptr<Table>> FileReaderImpl::ReadRowGroups(
     END_PARQUET_CATCH_EXCEPTIONS
   }
 
-  auto fut = DecodeRowGroups(/*self=*/nullptr, row_groups, column_indices,
-                             /*cpu_executor=*/nullptr);
-  return fut.MoveResult();
+  return DecodeRowGroups(/*self=*/nullptr, row_groups, column_indices, cpu_executor);
+}
+
+Result<std::shared_ptr<Table>> FileReaderImpl::ReadRowGroups(
+    const std::vector<int>& row_groups, const std::vector<int>& column_indices) {
+  return ReadRowGroupsAsync(row_groups, column_indices).MoveResult();
 }
 
 Future<std::shared_ptr<Table>> FileReaderImpl::DecodeRowGroups(
